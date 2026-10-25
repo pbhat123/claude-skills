@@ -28,6 +28,24 @@ cp -R claude-skills/*/ /path/to/project/.claude/skills/
 
 Claude Code picks a skill up automatically when the task matches its description. You can also call one by name, for example `/metered-live-run`.
 
+## 🪝 Bonus: pre-commit hook
+
+`pre-commit` blocks a commit unless the tests pass. It runs the test suite on every commit, and a UI smoke test when UI files are staged. Each step is killed after a time limit, so a hung test can't freeze git. `spec-batch-build` relies on it.
+
+```bash
+cp pre-commit /path/to/project/.git/hooks/pre-commit
+chmod +x /path/to/project/.git/hooks/pre-commit
+```
+
+| Setting (env var) | Default | What it is |
+|---|---|---|
+| `HOOK_TIMEOUT` | `600` | Seconds per step before it is stopped |
+| `HOOK_TEST_CMD` | `pytest -q` | Test command |
+| `HOOK_SMOKE_CMD` | `python scripts/smoke_ui.py` | UI smoke command |
+| `HOOK_UI_PATTERN` | `(^\|/)ui/` | Staged paths that trigger the smoke test |
+
+Rule: never bypass it with `git commit --no-verify`.
+
 ## 🧭 How they fit together
 
 ```
@@ -45,6 +63,7 @@ prompt-version-change ──► metered-live-run ──► eval-failure-triage
 ```
 <skill-name>/
 └── SKILL.md   # frontmatter (name, description) + the steps
+pre-commit     # git hook: tests (+ UI smoke) with a time limit
 ```
 
 ## 📝 Notes

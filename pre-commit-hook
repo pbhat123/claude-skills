@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# pre-commit: block a commit unless the tests pass.
+# Runs the test suite on every commit, plus a UI smoke test when UI files are staged.
+# Each step has a time limit, so a hung test can't freeze git.
+# Never bypass it with --no-verify.
+#
+# Install:  cp pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# Settings (environment variables, all optional):
+#   HOOK_TIMEOUT     seconds per step before it is killed      (default 600)
+#   HOOK_TEST_CMD    the test command                          (default "pytest -q")
+#   HOOK_SMOKE_CMD   the UI smoke command                      (default "python scripts/smoke_ui.py")
+#   HOOK_UI_PATTERN  regex for staged paths that need smoke    (default "(^|/)ui/")
+
+set -u
+
+LIMIT="${HOOK_TIMEOUT:-600}"
+TEST_CMD="${HOOK_TEST_CMD:-pytest -q}"
+SMOKE_CMD="${HOOK_SMOKE_CMD:-python scripts/smoke_ui.py}"
+UI_PATTERN="${HOOK_UI_PATTERN:-(^|/)ui/}"
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# run_limited LABEL COMMAND...  runs the command, kills it after LIMIT seconds.
+run_limited() {
+  label="$1"; shift
+  echo "pre-commit: $label: $*"
+  "$@" &
+  pid=$!
+  (
+    elapsed=0
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 1
+      elapsed=$((elapsed + 1))
+      if [ "$elapsed" -ge "$LIMIT" ]; then
+        kill -TERM "$pid" 2>/dev/null
+        sleep 5
+        kill -KILL "$pid" 2>/dev/null
+        exit 0
+      fi
+    done
+  ) &
+  watcher=$!
+  wait "$pid"
+  status=$?
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  if [ "$status" -ne 0 ]; then
+    if [ "$status" -ge 128 ]; then
+      echo "pre-commit: $label stopped after the ${LIMIT}s limit."
+    else
+      echo "pre-commit: $label failed (exit $status)."
+    fi
+    echo "pre-commit: commit blocked. Fix the problem and commit again (do not use --no-verify)."
+    exit 1
+  fi
+}
+
+# shellcheck disable=SC2086  # word-split the command strings on purpose
+run_limited "tests" $TEST_CMD
+
+if printf '%s\n' "$staged" | grep -Eq "$UI_PATTERN"; then
+  run_limited "UI smoke test" $SMOKE_CMD
+fi
+
+echo "pre-commit: all checks passed."
+exit 0
